@@ -1,18 +1,18 @@
-environment                 = "shared"
+environment                 = "demo"
 name                        = "vpc"
-vpc_name                    = "Shared"
+vpc_name                    = "Demo"
 cidr_block                  = "10.10.0.0/16"
 instance_tenancy            = "default"
-private_subnets             = ["10.10.107.0/24", "10.10.108.0/24", "10.10.109.0/24"]
-public_subnets              = ["10.10.7.0/24", "10.10.8.0/24", "10.10.9.0/24"]
+private_subnets             = ["10.10.104.0/24", "10.10.105.0/24", "10.10.106.0/24"]
+public_subnets              = ["10.10.4.0/24", "10.10.5.0/24", "10.10.6.0/24"]
 igwname                     = "igw"
 natname                     = "natgw"
 rtname                      = "rt"
-key_name                    = "4Shark-shared"
+key_name                    = "4Shark-demo"
 cluster_name                = "001-cluster"
 instance_type               = "t3a.medium"
 desired_capacity            = 9 ##Cluster
-max_size                    = 15
+max_size                    = 10
 min_size                    = 0
 volume_size                 = 30
 volume_type                 = "gp3"
@@ -22,7 +22,7 @@ sgname                      = "ecs-sg-4shark"
 ecs_instance_profile        = "ecs-instance-profile"
 asg_tag                     = "ecs-4shark"
 launch_template_name        = "ecs-4shark"
-capacity_provider_name      = "shared-capacity-provider"
+capacity_provider_name      = "demo-capacity-provider"
 enable_managed_termination  = false
 target_capacity_percent     = 100
 min_step                    = 1
@@ -30,11 +30,12 @@ max_step                    = 10.000
 default_weight              = 1
 default_base                = 0
 
+
 services = {
-  "sharedapp001-service" = {
-    task_family                  = "sharedapp001"
-    container_name               = "shared-app001"
-    image                        = "405749097490.dkr.ecr.us-east-1.amazonaws.com/app:latest"
+  "demoapp001-service" = {
+    task_family                  = "demoapp001"
+    container_name               = "demo-app001"
+    image                        = "405749097490.dkr.ecr.us-east-1.amazonaws.com/app"
     task_cpu                     = 2048
     task_memory                  = 2048
     container_cpu                = 0
@@ -43,7 +44,7 @@ services = {
     container_port               = 3000
     desired_count                = 1
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -110,8 +111,8 @@ services = {
     ]
     execution_role_arn          = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn               = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
-    cloudwatch_log_group_name   = "/ecs/shared-app001"
-    create_cloudwatch_log_group = false
+    cloudwatch_log_group_name   = "/ecs/demo-app001"
+    create_cloudwatch_log_group = true
     enable_cloudwatch_logging   = true
   }
 
@@ -130,7 +131,7 @@ services = {
     desired_count = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -200,8 +201,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_migration"
-    create_cloudwatch_log_group = false
+    cloudwatch_log_group_name   = "/ecs/demo-worker-migration"
+    create_cloudwatch_log_group = true
     enable_cloudwatch_logging   = true
   }
 
@@ -222,7 +223,7 @@ services = {
     desired_count = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -292,8 +293,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker-commission"
-    create_cloudwatch_log_group = false
+    cloudwatch_log_group_name   = "/ecs/demo-worker-commission"
+    create_cloudwatch_log_group = true
     enable_cloudwatch_logging   = true
   }
 
@@ -314,7 +315,7 @@ services = {
     desired_count = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -384,7 +385,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_migration"
+    cloudwatch_log_group_name   = "/ecs/demo-worker-migration"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -405,7 +406,7 @@ services = {
     desired_count  = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -475,8 +476,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_commission_white_shark"
-    create_cloudwatch_log_group = false
+    cloudwatch_log_group_name   = "/ecs/demo-worker-commission-white-shark"
+    create_cloudwatch_log_group = true
     enable_cloudwatch_logging   = true
   }
   "worker_commission_white_shark-service" = {
@@ -496,7 +497,7 @@ services = {
     desired_count  = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -566,7 +567,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_migration"
+    cloudwatch_log_group_name   = "/ecs/demo-worker-migration"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -587,7 +588,7 @@ services = {
     desired_count  = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -657,7 +658,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_commission_white_shark"
+    cloudwatch_log_group_name   = "/ecs/demo-worker-commission-white-shark"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -678,7 +679,7 @@ services = {
     desired_count = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -747,8 +748,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_system"
-    create_cloudwatch_log_group = false
+    cloudwatch_log_group_name   = "/ecs/demo-worker-system"
+    create_cloudwatch_log_group = true
     enable_cloudwatch_logging   = true
   }
   "worker_user-service" = {
@@ -770,7 +771,7 @@ services = {
     desired_count = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -840,7 +841,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_migration"
+    cloudwatch_log_group_name   = "/ecs/demo-worker-migration"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -861,7 +862,7 @@ services = {
     desired_count  = 1
 
     env = {
-      ALB_HOSTNAME    = "internal-4shark-shared-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
+      ALB_HOSTNAME    = "internal-4shark-demo-dev-app-lb-2106105836.us-east-1.elb.amazonaws.com"
       RAILS_ENV       = "development"
       SIDEKIQ_THREADS = "10"
     }
@@ -931,10 +932,10 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/shared-worker_user"
+    cloudwatch_log_group_name   = "/ecs/demo-worker-user"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
 
 
-}
+} 
