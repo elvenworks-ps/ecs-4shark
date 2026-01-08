@@ -11,7 +11,7 @@ resource "aws_cloudwatch_log_group" "this" {
 
 resource "aws_ecs_task_definition" "this" {
   family                   = var.task_family
-  network_mode             = "awsvpc"
+  network_mode             = "bridge"
   requires_compatibilities = ["EC2"]
   cpu                      = var.cpu
   memory                   = var.memory
@@ -20,18 +20,29 @@ resource "aws_ecs_task_definition" "this" {
 
   container_definitions = jsonencode([
     {
-      name                   = var.container_name
-      image                  = var.image
-      cpu                    = var.container_cpu
-      memoryReservation      = var.container_memory_reservation
-      memory                 = var.container_memory
-      essential              = true
-      command                = length(var.command) > 0 ? var.command : null
-      entryPoint             = length(var.entrypoint) > 0 ? var.entrypoint : null
-      environment            = local.environment_list
-      secrets                = var.secrets
-      portMappings           = var.container_port == null ? [] : [{ containerPort = var.container_port, hostPort = var.container_port, protocol = "tcp" }]
-      healthCheck            = var.health_check
+      name              = var.container_name
+      image             = var.image
+      cpu               = var.container_cpu
+      memoryReservation = var.container_memory_reservation
+      memory            = var.container_memory
+      essential         = true
+
+      command     = length(var.command) > 0 ? var.command : null
+      entryPoint  = length(var.entrypoint) > 0 ? var.entrypoint : null
+      environment = local.environment_list
+      secrets     = var.secrets
+
+      # IMPORTANTE:
+      # - Se você quer escalar tasks por instância sem conflito, use hostPort = 0.
+      # - Se você precisa fixar porta no host (1 task por EC2), deixe hostPort = var.container_port.
+      portMappings = var.container_port == null ? [] : [{
+        containerPort = var.container_port
+        hostPort      = 0
+        protocol      = "tcp"
+      }]
+
+      healthCheck = var.health_check
+
       logConfiguration = var.enable_cloudwatch_logging ? {
         logDriver = "awslogs"
         options = {
@@ -62,12 +73,6 @@ resource "aws_ecs_service" "this" {
     capacity_provider = var.capacity_provider
     weight            = var.capacity_provider_weight
     base              = var.capacity_provider_base
-  }
-
-  network_configuration {
-    subnets          = var.subnets
-    security_groups  = var.security_groups
-    assign_public_ip = var.assign_public_ip
   }
 
   dynamic "load_balancer" {

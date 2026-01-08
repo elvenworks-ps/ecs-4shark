@@ -1,10 +1,10 @@
-environment                 = "beta"
+environment                 = "shared"
 name                        = "vpc"
-vpc_name                    = "Beta"
+vpc_name                    = "Shared"
 cidr_block                  = "10.10.0.0/16"
 instance_tenancy            = "default"
-private_subnets             = ["10.10.101.0/24", "10.10.102.0/24", "10.10.103.0/24"]
-public_subnets              = ["10.10.1.0/24", "10.10.2.0/24", "10.10.3.0/24"]
+private_subnets             = ["10.10.107.0/24", "10.10.108.0/24", "10.10.109.0/24"]
+public_subnets              = ["10.10.7.0/24", "10.10.8.0/24", "10.10.9.0/24"]
 igwname                     = "igw"
 natname                     = "natgw"
 rtname                      = "rt"
@@ -110,8 +110,8 @@ services = {
     ]
     execution_role_arn          = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn               = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
-    cloudwatch_log_group_name   = "/ecs/beta-app001"
-    create_cloudwatch_log_group = true
+    cloudwatch_log_group_name   = "/ecs/betaapp001"
+    create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
 
@@ -200,8 +200,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-migration"
-    create_cloudwatch_log_group = true
+    cloudwatch_log_group_name   = "/ecs/beta-worker_migration"
+    create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
 
@@ -293,7 +293,7 @@ services = {
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
     cloudwatch_log_group_name   = "/ecs/beta-worker-commission"
-    create_cloudwatch_log_group = true
+    create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
 
@@ -384,7 +384,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-migration"
+    cloudwatch_log_group_name   = "/ecs/betaworker_migration"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -475,8 +475,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-commission-white-shark"
-    create_cloudwatch_log_group = true
+    cloudwatch_log_group_name   = "/ecs/beta-worker_commission_white_shark"
+    create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
   "worker_commission_white_shark-service" = {
@@ -566,7 +566,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-migration"
+    cloudwatch_log_group_name   = "/ecs/betaworker_migration"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -657,7 +657,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-commission-white-shark"
+    cloudwatch_log_group_name   = "/ecs/worker_commission_white_shark"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -747,8 +747,8 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-system"
-    create_cloudwatch_log_group = true
+    cloudwatch_log_group_name   = "/ecs/worker_system"
+    create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
   "worker_user-service" = {
@@ -840,7 +840,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-migration"
+    cloudwatch_log_group_name   = "/ecs/betaworker_migration"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }
@@ -931,7 +931,7 @@ services = {
     execution_role_arn = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
     task_role_arn      = "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
 
-    cloudwatch_log_group_name   = "/ecs/beta-worker-user"
+    cloudwatch_log_group_name   = "/ecs/beta-worker_user"
     create_cloudwatch_log_group = false
     enable_cloudwatch_logging   = true
   }

@@ -15,48 +15,48 @@ data "aws_ami" "ecs_optimized" {
   owners      = ["amazon"]
 }
 
-## VPC
-# module "vpc" {
-#   source = "../modules/vpc"
+# VPC
+module "vpc" {
+  source = "../modules/vpc"
 
-#   name                 = var.name
-#   cidr_block           = var.cidr_block
-#   instance_tenancy     = var.instance_tenancy
-#   enable_dns_support   = true
-#   enable_dns_hostnames = true
+  name                 = var.name
+  cidr_block           = var.cidr_block
+  instance_tenancy     = var.instance_tenancy
+  enable_dns_support   = true
+  enable_dns_hostnames = true
 
-#   tags        = local.tags
-#   environment = local.environment
+  tags        = local.tags
+  environment = local.environment
 
-#   private_subnets         = var.private_subnets
-#   public_subnets          = var.public_subnets
-#   map_public_ip_on_launch = true
+  private_subnets         = var.private_subnets
+  public_subnets          = var.public_subnets
+  map_public_ip_on_launch = true
 
-#   igwname = var.igwname
-#   natname = var.natname
-#   rtname  = var.rtname
+  igwname = var.igwname
+  natname = var.natname
+  rtname  = var.rtname
 
-#   #   # route_table_routes_private = {
-#   #   #   ## add block to create route in subnet-public
-#   #   #   "vpc_peering" = {
-#   #   #     "cidr_block"                = "10.10.0.0/16"
-#   #   #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
-#   #   #   }
-#   #   # }
-#   #   # route_table_routes_public = {
-#   #   #   ## add block to create route in subnet-private
-#   #   #   "vpc_peering" = {
-#   #   #     "cidr_block"                = "10.10.0.0/16"
-#   #   #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
-#   #   #   }
+  # route_table_routes_private = {
+  #   ## add block to create route in subnet-public
+  #   "vpc_peering" = {
+  #     "cidr_block"                = "10.10.0.0/16"
+  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
+  #   }
+  # }
+  # route_table_routes_public = {
+  #   ## add block to create route in subnet-private
+  #   "vpc_peering" = {
+  #     "cidr_block"                = "10.10.0.0/16"
+  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
+  #   }
 
-#   #   # }
-# }
-
-module "vpc_data" {
-  source   = "../modules/vpc_data"
-  vpc_name = var.vpc_name
+  # }
 }
+
+# module "vpc_data" {
+#   source   = "../modules/vpc_data"
+#   vpc_name = var.vpc_name
+# }
 
 
 module "ecs_cluster" {
@@ -89,7 +89,21 @@ module "ecs_cluster" {
   default_weight              = var.default_weight
   default_base                = var.default_base
   # additional_rules_security_group = {
-  #   ingress_rule_1 = {
+  #   ingress_rule_1 = {  # route_table_routes_private = {
+  #   ## add block to create route in subnet-public
+  #   "vpc_peering" = {
+  #     "cidr_block"                = "10.10.0.0/16"
+  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
+  #   }
+  # }
+  # route_table_routes_public = {
+  #   ## add block to create route in subnet-private
+  #   "vpc_peering" = {
+  #     "cidr_block"                = "10.10.0.0/16"
+  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
+  #   }
+
+  # }
   #     from_port   = 0
   #     to_port     = 0
   #     protocol    = "-1"

@@ -1,0 +1,11 @@
+--2025-05-27 11:18:51--  https://apt.releases.hashicorp.com/gpg
+Resolvendo apt.releases.hashicorp.com (apt.releases.hashicorp.com)... 65.8.214.53, 65.8.214.24, 65.8.214.52, ...
+Conectando-se a apt.releases.hashicorp.com (apt.releases.hashicorp.com)|65.8.214.53|:443... conectado.
+A requisição HTTP foi enviada, aguardando resposta... 200 OK
+Tamanho: 3980 (3,9K) [binary/octet-stream]
+Salvando em: “STDOUT”
+
+-                                        0%[                                                                             ]       0  --.-KB/s               -                                      100%[============================================================================>]   3,89K  --.-KB/s    em 0s      
+
+2025-05-27 11:18:56 (225 MB/s) - escrito para a saída padrão  [3980/3980]
+
