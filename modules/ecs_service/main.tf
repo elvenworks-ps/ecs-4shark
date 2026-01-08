@@ -94,6 +94,12 @@ resource "aws_ecs_service" "this" {
   depends_on = [
     aws_cloudwatch_log_group.this
   ]
+
+  lifecycle {
+    ignore_changes = [
+      task_definition
+    ]
+  }
 }
 
 data "aws_region" "current" {}
