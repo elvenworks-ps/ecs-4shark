@@ -171,6 +171,30 @@ variable "deployment_maximum_percent" {
   default     = 200
 }
 
+variable "deployment_controller_type" {
+  description = "Deployment controller type (ex.: ECS, CODE_DEPLOY). Null mantém padrão ECS."
+  type        = string
+  default     = null
+}
+
+variable "enable_deployment_circuit_breaker" {
+  description = "Habilita deployment circuit breaker."
+  type        = bool
+  default     = false
+}
+
+variable "deployment_rollback" {
+  description = "Habilita rollback automático quando circuit breaker está ativo."
+  type        = bool
+  default     = true
+}
+
+variable "advanced_configuration" {
+  description = "Advanced configuration for deployment strategies (e.g., blue/green ALB wiring)."
+  type        = any
+  default     = null
+}
+
 variable "enable_execute_command" {
   description = "Enable ECS Exec"
   type        = bool
@@ -217,4 +241,20 @@ variable "cloudwatch_log_group_kms_key_id" {
   description = "KMS key for log group"
   type        = string
   default     = null
+}
+
+variable "deployment_strategy" {
+  description = "Deployment strategy: ROLLING, BLUE_GREEN, LINEAR, or CANARY"
+  type        = string
+  default     = null
+}
+
+variable "bake_time_in_minutes" {
+  description = "Bake time in minutes for BLUE_GREEN, LINEAR, or CANARY deployments"
+  type        = number
+  default     = null
+}
+
+variable "environment" {
+  type = string
 }

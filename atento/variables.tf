@@ -37,3 +37,7 @@ variable "services" {
   type        = map(any)
   default     = {}
 }
+
+variable "ecr_repositories" {
+  type = set(string)
+}

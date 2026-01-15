@@ -32,8 +32,38 @@ variable "max_step" {}
 variable "default_weight" {}
 variable "default_base" {}
 
+## alb interno
+variable "private_zone_name" {
+  description = "Nome da private hosted zone no Route53 (ex.: 4shark.internal)"
+  type        = string
+}
+
+variable "alb_name_prefix" {
+  description = "Prefixo para nomear ALB/TG (ex.: beta-app)"
+  type        = string
+}
+
+variable "alb_record_name" {
+  description = "FQDN para o CNAME do ALB (ex.: beta.4shark.internal)"
+  type        = string
+}
+
+variable "alb_ingress_cidrs" {
+  description = "CIDRs permitidos no SG do ALB (porta 80)"
+  type        = list(string)
+}
+
+variable "service_with_alb" {
+  description = "Nome do serviço ECS (chave do mapa) que deve registrar no ALB."
+  type        = string
+}
+
 variable "services" {
   description = "Mapa de serviços ECS (EC2) a serem criados"
   type        = map(any)
   default     = {}
+}
+
+variable "ecr_repositories" {
+  type = set(string)
 }

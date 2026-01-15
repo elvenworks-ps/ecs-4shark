@@ -81,6 +81,16 @@ resource "aws_ecs_service" "this" {
       target_group_arn = load_balancer.value.target_group_arn
       container_name   = load_balancer.value.container_name
       container_port   = load_balancer.value.container_port
+
+      dynamic "advanced_configuration" {
+        for_each = var.advanced_configuration == null ? [] : [var.advanced_configuration]
+        content {
+          alternate_target_group_arn = advanced_configuration.value.alternate_target_group_arn
+          production_listener_rule   = advanced_configuration.value.production_listener_rule
+          role_arn                   = advanced_configuration.value.role_arn
+          test_listener_rule         = try(advanced_configuration.value.test_listener_rule, null)
+        }
+      }
     }
   }
 
@@ -88,6 +98,29 @@ resource "aws_ecs_service" "this" {
 
   deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
   deployment_maximum_percent         = var.deployment_maximum_percent
+
+  dynamic "deployment_configuration" {
+    for_each = var.deployment_strategy != null ? [1] : []
+    content {
+      strategy             = var.deployment_strategy
+      bake_time_in_minutes = var.bake_time_in_minutes
+    }
+  }
+
+  dynamic "deployment_circuit_breaker" {
+    for_each = var.enable_deployment_circuit_breaker ? [true] : []
+    content {
+      enable   = true
+      rollback = var.deployment_rollback
+    }
+  }
+
+  dynamic "deployment_controller" {
+    for_each = var.deployment_controller_type == null ? [] : [var.deployment_controller_type]
+    content {
+      type = deployment_controller.value
+    }
+  }
 
   tags = var.tags
 
@@ -97,9 +130,8 @@ resource "aws_ecs_service" "this" {
 
   lifecycle {
     ignore_changes = [
-      task_definition
+      load_balancer,
     ]
   }
 }
-
 data "aws_region" "current" {}
