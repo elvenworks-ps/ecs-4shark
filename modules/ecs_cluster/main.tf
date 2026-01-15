@@ -42,9 +42,14 @@ resource "aws_iam_role" "ecs_instance_role" {
 }
 
 # Anexa a política "AmazonEC2ContainerServiceforEC2Role" à IAM Role
-resource "aws_iam_role_policy_attachment" "ecs_policy_attach" {
+resource "aws_iam_role_policy_attachment" "ecs_policy_attach1" {
   role       = aws_iam_role.ecs_instance_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_policy_attach2" {
+  role       = aws_iam_role.ecs_instance_role.name
+  policy_arn = "arn:aws:iam::405749097490:policy/4shark-ECSInfrastructurePolicy"
 }
 
 # Criação do Instance Profile para associar a role
