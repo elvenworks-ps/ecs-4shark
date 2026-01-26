@@ -58,9 +58,39 @@ variable "service_with_alb" {
   type        = string
 }
 
+variable "enable_blue_green" {
+  description = "Habilita recursos de blue/green no ALB e serviço."
+  type        = bool
+  default     = false
+}
+
+variable "production_listener_rule_priority" {
+  description = "Prioridade da regra de listener usada como produção (deve existir em listener_rules do ALB)."
+  type        = number
+  default     = 100
+}
+
+variable "blue_green_test_path" {
+  description = "Path para listener rule de teste do blue/green."
+  type        = string
+  default     = "/bg-test*"
+}
+
+variable "blue_green_test_priority" {
+  description = "Prioridade da listener rule de teste do blue/green."
+  type        = number
+  default     = 50
+}
+
+variable "ecs_service_bluegreen_role_arn" {
+  description = "IAM role para o ECS gerenciar target groups em blue/green (ex.: AWSServiceRoleForECS)."
+  type        = string
+  default     = null
+}
+
 variable "services" {
   description = "Mapa de serviços ECS (EC2) a serem criados"
-  type        = map(any)
+  type        = any
   default     = {}
 }
 

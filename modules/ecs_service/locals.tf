@@ -8,6 +8,6 @@ locals {
 
   log_group_name = coalesce(
     var.cloudwatch_log_group_name,
-    "/aws/ecs/${var.service_name}"
+    "/ecs/${var.container_name}"
   )
 }

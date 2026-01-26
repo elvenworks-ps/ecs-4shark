@@ -39,12 +39,12 @@ variable "private_zone_name" {
 }
 
 variable "alb_name_prefix" {
-  description = "Prefixo para nomear ALB/TG (ex.: beta-app)"
+  description = "Prefixo para nomear ALB/TG (ex.: poc-app)"
   type        = string
 }
 
 variable "alb_record_name" {
-  description = "FQDN para o CNAME do ALB (ex.: beta.4shark.internal)"
+  description = "FQDN para o CNAME do ALB (ex.: poc.4shark.internal)"
   type        = string
 }
 

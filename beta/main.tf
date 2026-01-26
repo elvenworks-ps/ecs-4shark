@@ -40,6 +40,17 @@ module "internal_alb" {
   production_listener_rule_priority = var.production_listener_rule_priority
   blue_green_test_path              = var.blue_green_test_path
   blue_green_test_priority          = var.blue_green_test_priority
+
+  # Health check otimizado para deploys rápidos
+  health_check_path                = "/health"
+  health_check_matcher             = "200-399" # Aceita redirects e outros códigos de sucesso
+  health_check_interval            = 10        # 10s ao invés de 30s
+  health_check_timeout             = 5
+  health_check_healthy_threshold   = 2 # 2 checks (20s) ao invés de 5 (150s)
+  health_check_unhealthy_threshold = 3 # 3 falhas antes de marcar unhealthy
+
+  # Rollbacks mais rápidos
+  deregistration_delay = 30 # 30s ao invés de 300s default
 }
 
 module "ecs_cluster" {
@@ -49,6 +60,8 @@ module "ecs_cluster" {
   vpc_id                      = module.vpc_data.vpc_id
   subnets                     = module.vpc_data.private_ids
   key_name                    = var.key_name
+  create_key_pair             = false
+  manage_iam                  = true
   cluster_name                = var.cluster_name
   instance_type               = var.instance_type
   ami_id                      = data.aws_ami.ecs_optimized.id
@@ -78,6 +91,7 @@ module "ecs_services" {
   source      = "../modules/ecs_service"
   for_each    = local.services
   environment = var.environment
+  depends_on  = [module.ecs_cluster]
 
   cluster_name      = module.ecs_cluster.ecs_cluster_name
   capacity_provider = var.capacity_provider_name
@@ -108,18 +122,23 @@ module "ecs_services" {
   capacity_provider_base             = lookup(each.value, "capacity_provider_base", 0)
   deployment_minimum_healthy_percent = lookup(each.value, "deployment_minimum_healthy_percent", 50)
   deployment_maximum_percent         = lookup(each.value, "deployment_maximum_percent", 200)
+  enable_deployment_circuit_breaker  = lookup(each.value, "enable_deployment_circuit_breaker", true)
+  deployment_rollback                = lookup(each.value, "deployment_rollback", true)
   advanced_configuration             = lookup(each.value, "advanced_configuration", null)
   deployment_strategy                = lookup(each.value, "deployment_strategy", null)
   bake_time_in_minutes               = lookup(each.value, "bake_time_in_minutes", null)
   deployment_controller_type         = lookup(each.value, "deployment_controller_type", null)
   enable_execute_command             = lookup(each.value, "enable_execute_command", false)
 
+  # Grace period: espera antes de verificar health do ALB (evita terminar tasks prematuramente)
+  health_check_grace_period_seconds = lookup(each.value, "health_check_grace_period_seconds", 60)
+
   subnets          = module.vpc_data.private_ids
   security_groups  = [module.ecs_cluster.security_group_id]
   assign_public_ip = lookup(each.value, "assign_public_ip", false)
 
   enable_cloudwatch_logging              = lookup(each.value, "enable_cloudwatch_logging", true)
-  create_cloudwatch_log_group            = lookup(each.value, "create_cloudwatch_log_group", true)
+  create_cloudwatch_log_group            = lookup(each.value, "create_cloudwatch_log_group", false)
   cloudwatch_log_group_name              = lookup(each.value, "cloudwatch_log_group_name", null)
   cloudwatch_log_group_use_name_prefix   = lookup(each.value, "cloudwatch_log_group_use_name_prefix", false)
   cloudwatch_log_group_retention_in_days = lookup(each.value, "cloudwatch_log_group_retention_in_days", 30)
@@ -139,4 +158,66 @@ module "ecr" {
     Environment = var.environment
     ManagedBy   = "terraform"
   }
+}
+
+# =============================================================================
+# CodeDeploy Blue/Green para Web Service
+# =============================================================================
+module "codedeploy_web" {
+  source = "../modules/codedeploy"
+
+  environment = var.environment
+  app_name    = "web"
+
+  cluster_name = module.ecs_cluster.ecs_cluster_name
+  service_name = var.service_with_alb
+
+  listener_arn                = module.internal_alb.listener_arn
+  target_group_name           = module.internal_alb.target_group_name
+  alternate_target_group_name = module.internal_alb.alternate_target_group_name
+
+  deployment_config_name           = "CodeDeployDefault.ECSAllAtOnce"
+  termination_wait_time_in_minutes = 5
+
+  # Criar recursos via Terraform
+  create_iam_role       = true
+  create_codedeploy_app = true
+
+  tags = local.tags
+
+  depends_on = [
+    module.ecs_services,
+    module.internal_alb
+  ]
+}
+
+# =============================================================================
+# IAM Policy para Deploy (GitHub Actions)
+# =============================================================================
+module "iam_deploy" {
+  source = "../modules/iam_deploy"
+
+  environment        = var.environment
+  policy_name_prefix = "app-staging"
+  cluster_name       = "${var.environment}-001-cluster"
+
+  ecr_repository_arns = [
+    for repo in var.ecr_repositories :
+    "arn:aws:ecr:us-east-1:405749097490:repository/${repo}"
+  ]
+
+  task_execution_role_arns = [
+    "arn:aws:iam::405749097490:role/ecsTaskExecutionRole"
+  ]
+
+  enable_codedeploy                = true
+  codedeploy_app_name              = module.codedeploy_web.app_name
+  codedeploy_deployment_group_name = module.codedeploy_web.deployment_group_name
+
+  iam_user_name = "app-staging"
+
+  # Criar policy via Terraform
+  create_policy = true
+
+  tags = local.tags
 }

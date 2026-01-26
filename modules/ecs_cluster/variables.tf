@@ -17,6 +17,11 @@ variable "role_name" {
   description = "Nome da role ECS"
   type        = string
 }
+variable "manage_iam" {
+  description = "Se true, cria/gera role e instance profile; se false, usa nomes existentes fornecidos."
+  type        = bool
+  default     = false
+}
 
 variable "instance_type" {
   description = "Tipo da instância EC2"
@@ -69,6 +74,12 @@ variable "key_name" {
   description = "Key name of the Key Pair to use for the instance; which can be managed using the `aws_key_pair` resource"
   type        = string
   default     = "key-pem"
+}
+
+variable "create_key_pair" {
+  description = "Whether to create/manage the key pair (set to false to reuse an existing one)"
+  type        = bool
+  default     = false
 }
 
 variable "tags" {

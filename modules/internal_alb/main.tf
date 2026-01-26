@@ -37,8 +37,8 @@ resource "aws_iam_role_policy" "ecs_bluegreen" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = [
+        Effect = "Allow"
+        Action = [
           "elasticloadbalancing:ModifyRule",
           "elasticloadbalancing:ModifyListener",
           "elasticloadbalancing:DescribeRules",
@@ -101,6 +101,12 @@ resource "aws_lb_target_group" "this" {
   vpc_id      = var.vpc_id
   target_type = "instance"
 
+  # Menor delay = rollbacks mais rápidos (default AWS é 300s)
+  deregistration_delay = var.deregistration_delay
+
+  # Ramp-up gradual de tráfego (0 = desabilitado)
+  slow_start = var.slow_start
+
   health_check {
     enabled             = true
     path                = var.health_check_path
@@ -124,6 +130,9 @@ resource "aws_lb_target_group" "alternate" {
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
   target_type = "instance"
+
+  deregistration_delay = var.deregistration_delay
+  slow_start           = var.slow_start
 
   health_check {
     enabled             = true
@@ -149,10 +158,17 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.this.arn
   }
+
+  # CodeDeploy gerencia o default_action durante Blue/Green deployments
+  lifecycle {
+    ignore_changes = [default_action]
+  }
 }
 
+# Listener rules para paths específicos (NÃO usar com Blue/Green CodeDeploy)
+# CodeDeploy requer que o tráfego passe pelo default_action do listener
 resource "aws_lb_listener_rule" "paths" {
-  for_each = { for rule in var.listener_rules : rule.priority => rule }
+  for_each = var.enable_blue_green ? {} : { for rule in var.listener_rules : rule.priority => rule }
 
   listener_arn = aws_lb_listener.http.arn
   priority     = each.value.priority
@@ -167,23 +183,9 @@ resource "aws_lb_listener_rule" "paths" {
       values = [each.value.path]
     }
   }
-}
 
-resource "aws_lb_listener_rule" "blue_green_test" {
-  count = var.enable_blue_green ? 1 : 0
-
-  listener_arn = aws_lb_listener.http.arn
-  priority     = var.blue_green_test_priority
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.alternate[0].arn
-  }
-
-  condition {
-    path_pattern {
-      values = [var.blue_green_test_path]
-    }
+  lifecycle {
+    ignore_changes = [action]
   }
 }
 

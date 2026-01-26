@@ -90,3 +90,4 @@ terraform.modules.aws/
 
 *.json
 .terraform.lock.hcl
+app/

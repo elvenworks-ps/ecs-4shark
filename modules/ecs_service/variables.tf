@@ -258,3 +258,9 @@ variable "bake_time_in_minutes" {
 variable "environment" {
   type = string
 }
+
+variable "health_check_grace_period_seconds" {
+  description = "Seconds to wait before ECS starts checking ALB health. Prevents premature task termination during startup."
+  type        = number
+  default     = 60
+}

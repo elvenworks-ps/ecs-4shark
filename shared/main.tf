@@ -15,56 +15,41 @@ data "aws_ami" "ecs_optimized" {
   owners      = ["amazon"]
 }
 
-# VPC
-module "vpc" {
-  source = "../modules/vpc"
-
-  name                 = var.name
-  cidr_block           = var.cidr_block
-  instance_tenancy     = var.instance_tenancy
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags        = local.tags
-  environment = local.environment
-
-  private_subnets         = var.private_subnets
-  public_subnets          = var.public_subnets
-  map_public_ip_on_launch = true
-
-  igwname = var.igwname
-  natname = var.natname
-  rtname  = var.rtname
-
-  # route_table_routes_private = {
-  #   ## add block to create route in subnet-public
-  #   "vpc_peering" = {
-  #     "cidr_block"                = "10.10.0.0/16"
-  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
-  #   }
-  # }
-  # route_table_routes_public = {
-  #   ## add block to create route in subnet-private
-  #   "vpc_peering" = {
-  #     "cidr_block"                = "10.10.0.0/16"
-  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
-  #   }
-
-  # }
+data "aws_route53_zone" "private" {
+  name         = var.private_zone_name
+  private_zone = true
 }
 
-# module "vpc_data" {
-#   source   = "../modules/vpc_data"
-#   vpc_name = var.vpc_name
-# }
+module "vpc_data" {
+  source   = "../modules/vpc_data"
+  vpc_name = var.vpc_name
+}
 
+module "internal_alb" {
+  source = "../modules/internal_alb"
+
+  name_prefix       = var.alb_name_prefix
+  vpc_id            = module.vpc_data.vpc_id
+  subnet_ids        = module.vpc_data.private_ids
+  record_name       = var.alb_record_name
+  private_zone_id   = data.aws_route53_zone.private.zone_id
+  alb_ingress_cidrs = var.alb_ingress_cidrs
+  tags              = local.tags
+
+  enable_blue_green                 = var.enable_blue_green
+  production_listener_rule_priority = var.production_listener_rule_priority
+  blue_green_test_path              = var.blue_green_test_path
+  blue_green_test_priority          = var.blue_green_test_priority
+}
 
 module "ecs_cluster" {
-  source = "../modules/ecs_cluster"
+  depends_on = [module.ecr]
+  source     = "../modules/ecs_cluster"
 
   vpc_id                      = module.vpc_data.vpc_id
   subnets                     = module.vpc_data.private_ids
   key_name                    = var.key_name
+  create_key_pair             = false
   cluster_name                = var.cluster_name
   instance_type               = var.instance_type
   ami_id                      = data.aws_ami.ecs_optimized.id
@@ -88,35 +73,13 @@ module "ecs_cluster" {
   max_step                    = var.max_step
   default_weight              = var.default_weight
   default_base                = var.default_base
-  # additional_rules_security_group = {
-  #   ingress_rule_1 = {  # route_table_routes_private = {
-  #   ## add block to create route in subnet-public
-  #   "vpc_peering" = {
-  #     "cidr_block"                = "10.10.0.0/16"
-  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
-  #   }
-  # }
-  # route_table_routes_public = {
-  #   ## add block to create route in subnet-private
-  #   "vpc_peering" = {
-  #     "cidr_block"                = "10.10.0.0/16"
-  #     "vpc_peering_connection_id" = "pcx-xxxxxxxxxxxxxxxxx"
-  #   }
-
-  # }
-  #     from_port   = 0
-  #     to_port     = 0
-  #     protocol    = "-1"
-  #     cidr_blocks = ["10.10.0.0/16"]
-  #     description = "VPN"
-  #     type        = "ingress"
-  #   },
-  # }
 }
 
 module "ecs_services" {
-  source   = "../modules/ecs_service"
-  for_each = var.services
+  source      = "../modules/ecs_service"
+  for_each    = local.services
+  environment = var.environment
+  depends_on  = [module.ecs_cluster]
 
   cluster_name      = module.ecs_cluster.ecs_cluster_name
   capacity_provider = var.capacity_provider_name
@@ -147,6 +110,10 @@ module "ecs_services" {
   capacity_provider_base             = lookup(each.value, "capacity_provider_base", 0)
   deployment_minimum_healthy_percent = lookup(each.value, "deployment_minimum_healthy_percent", 50)
   deployment_maximum_percent         = lookup(each.value, "deployment_maximum_percent", 200)
+  advanced_configuration             = lookup(each.value, "advanced_configuration", null)
+  deployment_strategy                = lookup(each.value, "deployment_strategy", null)
+  bake_time_in_minutes               = lookup(each.value, "bake_time_in_minutes", null)
+  deployment_controller_type         = lookup(each.value, "deployment_controller_type", null)
   enable_execute_command             = lookup(each.value, "enable_execute_command", false)
 
   subnets          = module.vpc_data.private_ids
@@ -161,4 +128,17 @@ module "ecs_services" {
   cloudwatch_log_group_kms_key_id        = lookup(each.value, "cloudwatch_log_group_kms_key_id", null)
 
   tags = merge(local.tags, lookup(each.value, "tags", {}))
+}
+
+module "ecr" {
+  source = "../modules/ecr"
+
+  for_each = var.ecr_repositories
+
+  name = each.value
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
 }

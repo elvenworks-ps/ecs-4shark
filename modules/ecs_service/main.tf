@@ -69,28 +69,24 @@ resource "aws_ecs_service" "this" {
   desired_count   = var.desired_count
   task_definition = aws_ecs_task_definition.this.arn
 
+  # Grace period: tempo que o ECS espera antes de verificar health do ALB
+  # Evita que tasks sejam terminadas prematuramente durante startup
+  health_check_grace_period_seconds = length(var.load_balancers) > 0 ? var.health_check_grace_period_seconds : null
+
   capacity_provider_strategy {
     capacity_provider = var.capacity_provider
     weight            = var.capacity_provider_weight
     base              = var.capacity_provider_base
   }
 
+  # Para CODE_DEPLOY: load_balancer é obrigatório para o setup inicial
+  # O CodeDeploy vai gerenciar os target groups durante deployments
   dynamic "load_balancer" {
     for_each = var.load_balancers
     content {
       target_group_arn = load_balancer.value.target_group_arn
       container_name   = load_balancer.value.container_name
       container_port   = load_balancer.value.container_port
-
-      dynamic "advanced_configuration" {
-        for_each = var.advanced_configuration == null ? [] : [var.advanced_configuration]
-        content {
-          alternate_target_group_arn = advanced_configuration.value.alternate_target_group_arn
-          production_listener_rule   = advanced_configuration.value.production_listener_rule
-          role_arn                   = advanced_configuration.value.role_arn
-          test_listener_rule         = try(advanced_configuration.value.test_listener_rule, null)
-        }
-      }
     }
   }
 
@@ -99,16 +95,18 @@ resource "aws_ecs_service" "this" {
   deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
   deployment_maximum_percent         = var.deployment_maximum_percent
 
+  # deployment_configuration só é usado quando deployment_controller_type NÃO é CODE_DEPLOY
   dynamic "deployment_configuration" {
-    for_each = var.deployment_strategy != null ? [1] : []
+    for_each = var.deployment_strategy != null && var.deployment_controller_type != "CODE_DEPLOY" ? [1] : []
     content {
       strategy             = var.deployment_strategy
       bake_time_in_minutes = var.bake_time_in_minutes
     }
   }
 
+  # Circuit breaker só é usado quando deployment_controller_type NÃO é CODE_DEPLOY
   dynamic "deployment_circuit_breaker" {
-    for_each = var.enable_deployment_circuit_breaker ? [true] : []
+    for_each = var.enable_deployment_circuit_breaker && var.deployment_controller_type != "CODE_DEPLOY" ? [true] : []
     content {
       enable   = true
       rollback = var.deployment_rollback
@@ -131,6 +129,8 @@ resource "aws_ecs_service" "this" {
   lifecycle {
     ignore_changes = [
       load_balancer,
+      desired_count,
+      task_definition, # CodeDeploy gerencia a task definition durante deployments
     ]
   }
 }

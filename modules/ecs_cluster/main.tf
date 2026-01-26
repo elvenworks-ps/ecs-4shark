@@ -27,6 +27,8 @@ resource "aws_ecs_cluster" "cluster" {
 
 # Criação da IAM Role para EC2
 resource "aws_iam_role" "ecs_instance_role" {
+  count = var.manage_iam ? 1 : 0
+
   name = var.role_name
 
   assume_role_policy = jsonencode({
@@ -43,24 +45,34 @@ resource "aws_iam_role" "ecs_instance_role" {
 
 # Anexa a política "AmazonEC2ContainerServiceforEC2Role" à IAM Role
 resource "aws_iam_role_policy_attachment" "ecs_policy_attach" {
-  role       = aws_iam_role.ecs_instance_role.name
+  count      = var.manage_iam ? 1 : 0
+  role       = var.role_name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
 }
 
 # Criação do Instance Profile para associar a role
 resource "aws_iam_instance_profile" "ecs_instance_profile" {
-  name = var.ecs_instance_profile
-  role = aws_iam_role.ecs_instance_role.name
+  count = var.manage_iam ? 1 : 0
+  name  = var.ecs_instance_profile
+  role  = var.role_name
 }
 
 resource "tls_private_key" "this" {
+  count = var.create_key_pair ? 1 : 0
+
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "this" {
+  count = var.create_key_pair ? 1 : 0
+
   key_name   = var.key_name
-  public_key = tls_private_key.this.public_key_openssh
+  public_key = tls_private_key.this[0].public_key_openssh
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   tags = merge(
     {
@@ -71,9 +83,15 @@ resource "aws_key_pair" "this" {
 }
 
 resource "local_file" "private_key" {
+  count = var.create_key_pair ? 1 : 0
+
   filename        = "${path.module}/${var.key_name}.pem"
-  content         = tls_private_key.this.private_key_pem
+  content         = tls_private_key.this[0].private_key_pem
   file_permission = "0600"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Launch Template para ECS
@@ -81,7 +99,7 @@ resource "aws_launch_template" "ecs_instance_template" {
   name_prefix   = var.launch_template_name
   image_id      = var.ami_id
   instance_type = var.instance_type
-  key_name      = aws_key_pair.this.key_name
+  key_name      = var.key_name
 
   block_device_mappings {
     device_name = "/dev/xvda"
@@ -97,7 +115,7 @@ resource "aws_launch_template" "ecs_instance_template" {
   }
 
   iam_instance_profile {
-    name = aws_iam_instance_profile.ecs_instance_profile.name
+    name = var.manage_iam ? aws_iam_instance_profile.ecs_instance_profile[0].name : var.ecs_instance_profile
   }
 
   user_data = base64encode(<<-EOF

@@ -139,3 +139,15 @@ variable "blue_green_test_priority" {
   type        = number
   default     = 50
 }
+
+variable "deregistration_delay" {
+  description = "Tempo (segundos) que o ALB espera antes de remover um target do target group. Menor = rollbacks mais rápidos."
+  type        = number
+  default     = 30
+}
+
+variable "slow_start" {
+  description = "Tempo (segundos) para ramp-up gradual de tráfego em novos targets. 0 = desabilitado."
+  type        = number
+  default     = 0
+}
