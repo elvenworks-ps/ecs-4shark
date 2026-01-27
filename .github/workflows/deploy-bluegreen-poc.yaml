@@ -1,0 +1,490 @@
+name: Deploy Blue/Green POC
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  CLUSTER_NAME: poc-001-cluster
+  ENVIRONMENT: poc
+  CODEDEPLOY_APP_NAME: poc-001-web-app
+  CODEDEPLOY_DEPLOYMENT_GROUP: poc-001-web-dg
+  CODEDEPLOY_HOOK_LAMBDA_ARN: arn:aws:lambda:us-east-1:405749097490:function:codedeploy-hook-lambda-poc
+
+jobs:
+  # ============================================================================
+  # JOB 1: SCALE DOWN - Zera workers antes do deploy web
+  # ============================================================================
+  scale-workers-zero:
+    name: Scale Workers to 0
+    runs-on: ubuntu-latest
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - name: Setup AWS credentials from secrets
+        run: |
+          echo '${{ toJSON(secrets) }}' | jq -r "
+            to_entries[] |
+            select(.key | test(\"^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\")) |
+            \"\(.key)=\(.value)\"
+          " >> $GITHUB_ENV
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Scale workers to 0
+        run: |
+          SERVICES=(
+            "poc-001-worker-commission-service"
+            "poc-001-worker-system-service"
+            "poc-001-worker-user-service"
+          )
+
+          for SERVICE in "${SERVICES[@]}"; do
+            echo "Scaling ${SERVICE} to 0"
+            aws ecs update-service \
+              --cluster "${{ env.CLUSTER_NAME }}" \
+              --service "${SERVICE}" \
+              --desired-count 0
+          done
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  # ============================================================================
+  # JOB 2: DEPLOY - Deploy de todos os serviços usando a action padrão
+  # ============================================================================
+  deploy-web:
+    name: Deploy Web
+    runs-on: ubuntu-latest
+    needs: scale-workers-zero
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+      deployment_id: ${{ steps.codedeploy-web.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build/Push image and register task definition (CodeDeploy)
+        id: deploy-web
+        uses: ./.github/actions/deploy-ecs
+        with:
+          desired-count: '1'
+          dockerfile: web
+          ecr-repo: 405749097490.dkr.ecr.us-east-1.amazonaws.com/poc-001-web
+          ecs-cluster: poc-001-cluster
+          ecs-service: poc-001-web-service
+          rails-env: development
+          secrets-json: ${{ toJSON(secrets) }}
+          service-name: poc-001-web
+          task-family: poc-001-web
+          wait-stable: 'false'
+          deployment-mode: codedeploy
+          vars-json: ${{ toJSON(vars) }}
+      - name: Create CodeDeploy deployment
+        id: codedeploy-web
+        run: |
+          TASK_DEF_ARN="${{ steps['deploy-web'].outputs['task-def-arn'] }}"
+          HOOK_LAMBDA_ARN="${{ env.CODEDEPLOY_HOOK_LAMBDA_ARN }}"
+
+          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "null" ]; then
+            echo "Task definition ARN not found"
+            exit 1
+          fi
+          if [ -z "$HOOK_LAMBDA_ARN" ] || [ "$HOOK_LAMBDA_ARN" = "null" ]; then
+            echo "CODEDEPLOY_HOOK_LAMBDA_ARN not set (configure GitHub env var)"
+            exit 1
+          fi
+
+          cat > appspec.json <<'APPSPEC_EOF'
+          {
+            "version": 0.0,
+            "Resources": [
+              {
+                "TargetService": {
+                  "Type": "AWS::ECS::Service",
+                  "Properties": {
+                    "TaskDefinition": "__TASK_DEF__",
+                    "LoadBalancerInfo": {
+                      "ContainerName": "poc-001-web",
+                      "ContainerPort": 3000
+                    }
+                  }
+                }
+              }
+            ],
+            "Hooks": [
+              {
+                "BeforeAllowTraffic": "__HOOK_LAMBDA_ARN__"
+              }
+            ]
+          }
+          APPSPEC_EOF
+
+          jq --arg TASK_DEF "$TASK_DEF_ARN" --arg HOOK_ARN "$HOOK_LAMBDA_ARN" \
+            '.Resources[0].TargetService.Properties.TaskDefinition = $TASK_DEF |
+             .Hooks[0].BeforeAllowTraffic = $HOOK_ARN' \
+            appspec.json > appspec.rendered.json
+          # CodeDeploy espera o AppSpec como string (não objeto)
+          APP_SPEC_CONTENT=$(jq -c . appspec.rendered.json | jq -R .)
+
+          cat > codedeploy-input.json <<CODEDEPLOY_EOF
+          {
+            "applicationName": "${{ env.CODEDEPLOY_APP_NAME }}",
+            "deploymentGroupName": "${{ env.CODEDEPLOY_DEPLOYMENT_GROUP }}",
+            "revision": {
+              "revisionType": "AppSpecContent",
+              "appSpecContent": {
+                "content": $APP_SPEC_CONTENT
+              }
+            }
+          }
+          CODEDEPLOY_EOF
+
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --cli-input-json file://codedeploy-input.json \
+            --query 'deploymentId' \
+            --output text)
+
+          if [ -z "$DEPLOYMENT_ID" ] || [ "$DEPLOYMENT_ID" = "None" ]; then
+            echo "Failed to create CodeDeploy deployment"
+            exit 1
+          fi
+
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+          echo "CODEDEPLOY_DEPLOYMENT_ID=$DEPLOYMENT_ID" >> "$GITHUB_ENV"
+
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  deploy-worker-commission:
+    name: Deploy Worker Commission
+    runs-on: ubuntu-latest
+    needs: deploy-web
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy-ecs
+        with:
+          desired-count: '1'
+          dockerfile: worker
+          ecr-repo: 405749097490.dkr.ecr.us-east-1.amazonaws.com/poc-001-worker-commission
+          ecs-cluster: poc-001-cluster
+          ecs-service: poc-001-worker-commission-service
+          rails-env: development
+          secrets-json: ${{ toJSON(secrets) }}
+          service-name: poc-001-worker-commission
+          sidekiq-config: sidekiq_commission.yml
+          task-family: poc-001-worker-commission
+          wait-stable: 'true'
+          vars-json: ${{ toJSON(vars) }}
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  deploy-worker-system:
+    name: Deploy Worker System
+    runs-on: ubuntu-latest
+    needs: deploy-web
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy-ecs
+        with:
+          desired-count: '1'
+          dockerfile: worker
+          ecr-repo: 405749097490.dkr.ecr.us-east-1.amazonaws.com/poc-001-worker-system
+          ecs-cluster: poc-001-cluster
+          ecs-service: poc-001-worker-system-service
+          rails-env: development
+          secrets-json: ${{ toJSON(secrets) }}
+          service-name: poc-001-worker-system
+          sidekiq-config: sidekiq_system.yml
+          task-family: poc-001-worker-system
+          wait-stable: 'true'
+          vars-json: ${{ toJSON(vars) }}
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  deploy-worker-user:
+    name: Deploy Worker User
+    runs-on: ubuntu-latest
+    needs: deploy-web
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy-ecs
+        with:
+          desired-count: '1'
+          dockerfile: worker
+          ecr-repo: 405749097490.dkr.ecr.us-east-1.amazonaws.com/poc-001-worker-user
+          ecs-cluster: poc-001-cluster
+          ecs-service: poc-001-worker-user-service
+          rails-env: development
+          secrets-json: ${{ toJSON(secrets) }}
+          service-name: poc-001-worker-user
+          sidekiq-config: sidekiq_user.yml
+          task-family: poc-001-worker-user
+          wait-stable: 'true'
+          vars-json: ${{ toJSON(vars) }}
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  resume-deployment:
+    name: Resume Web Deployment
+    runs-on: ubuntu-latest
+    needs:
+      [
+        deploy-web,
+        deploy-worker-commission,
+        deploy-worker-system,
+        deploy-worker-user
+      ]
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - name: Setup AWS credentials from secrets
+        run: |
+          echo '${{ toJSON(secrets) }}' | jq -r "
+            to_entries[] |
+            select(.key | test(\"^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\")) |
+            \"\(.key)=\(.value)\"
+          " >> $GITHUB_ENV
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resume CodeDeploy Deployment
+        run: |
+          DEPLOYMENT_ID="${{ needs.deploy-web.outputs.deployment_id }}"
+          SSM_PARAM_NAME_HOOK_ID="/codedeploy-hooks/${DEPLOYMENT_ID}/hook-id"
+
+          MAX_ATTEMPTS=30
+          SLEEP_SECONDS=10
+          SSM_ERR_FILE=$(mktemp)
+
+          for ((ATTEMPT=1; ATTEMPT<=MAX_ATTEMPTS; ATTEMPT++)); do
+            if LIFECYCLE_EVENT_HOOK_EXECUTION_ID=$(aws ssm get-parameter \
+              --name "${SSM_PARAM_NAME_HOOK_ID}" \
+              --query "Parameter.Value" \
+              --output text 2>"$SSM_ERR_FILE"); then
+              if [ -n "$LIFECYCLE_EVENT_HOOK_EXECUTION_ID" ] && [ "$LIFECYCLE_EVENT_HOOK_EXECUTION_ID" != "None" ]; then
+                break
+              fi
+            fi
+
+            echo "[${ATTEMPT}/${MAX_ATTEMPTS}] Waiting for hook ID in SSM..."
+            sleep "$SLEEP_SECONDS"
+          done
+
+          if [ -z "$LIFECYCLE_EVENT_HOOK_EXECUTION_ID" ] || [ "$LIFECYCLE_EVENT_HOOK_EXECUTION_ID" = "None" ]; then
+            echo "Failed to retrieve LifecycleEventHookExecutionId from SSM."
+            cat "$SSM_ERR_FILE"
+            exit 1
+          fi
+
+          rm -f "$SSM_ERR_FILE"
+          echo "Resuming deployment ${DEPLOYMENT_ID} with hook ID ${LIFECYCLE_EVENT_HOOK_EXECUTION_ID}"
+
+          aws deploy put-lifecycle-event-hook-execution-status \
+            --deployment-id "${DEPLOYMENT_ID}" \
+            --lifecycle-event-hook-execution-id "${LIFECYCLE_EVENT_HOOK_EXECUTION_ID}" \
+            --status Succeeded
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  # ============================================================================
+  # JOB 4: TRAFFIC SHIFT - Monitora o CodeDeploy deployment e aguarda a conclusão
+  # ============================================================================
+  traffic-shift:
+    name: Traffic Shift
+    runs-on: ubuntu-latest
+    needs: [resume-deployment, deploy-web]
+    environment: poc
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - name: Setup AWS credentials from secrets
+        run: |
+          echo '${{ toJSON(secrets) }}' | jq -r "
+            to_entries[] |
+            select(.key | test(\"^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\")) |
+            \"\(.key)=\(.value)\"
+          " >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Monitor CodeDeploy deployment
+        run: |
+          DEPLOYMENT_ID="${{ needs.deploy-web.outputs.deployment_id }}"
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=15
+
+          if [ -z "$DEPLOYMENT_ID" ] || [ "$DEPLOYMENT_ID" = "None" ]; then
+            echo "Missing deployment ID"
+            exit 1
+          fi
+
+          for ((ATTEMPT=1; ATTEMPT<=MAX_ATTEMPTS; ATTEMPT++)); do
+            STATUS=$(aws deploy get-deployment \
+              --deployment-id "$DEPLOYMENT_ID" \
+              --query 'deploymentInfo.status' \
+              --output text)
+
+            echo "[${ATTEMPT}/${MAX_ATTEMPTS}] Deployment status: $STATUS"
+
+            if [ "$STATUS" = "Succeeded" ]; then
+              echo "CodeDeploy deployment succeeded"
+              exit 0
+            fi
+
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
+              echo "CodeDeploy deployment failed with status: $STATUS"
+              exit 1
+            fi
+
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              sleep $SLEEP_SECONDS
+            fi
+          done
+
+          echo "Deployment did not finish within timeout"
+          exit 1
+      - name: Set result
+        id: result
+        if: always()
+        run: echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+  # ============================================================================
+  # JOB 5: VALIDATE - Validar TODOS os serviços
+  # ============================================================================
+  validate:
+    name: Validate All Services
+    runs-on: ubuntu-latest
+    needs:
+      [
+        scale-workers-zero,
+        deploy-web,
+        deploy-worker-commission,
+        deploy-worker-system,
+        deploy-worker-user,
+        resume-deployment,
+        traffic-shift
+      ]
+    environment: poc
+    if: always()
+    outputs:
+      validation_status: ${{ steps.check.outputs.status }}
+
+    steps:
+      - name: Check deploy results
+        id: check-deploys
+        run: |
+          echo "Web: ${{ needs['deploy-web'].outputs.status }}"
+          echo "Commission: ${{ needs['deploy-worker-commission'].outputs.status }}"
+          echo "System: ${{ needs['deploy-worker-system'].outputs.status }}"
+          echo "User: ${{ needs['deploy-worker-user'].outputs.status }}"
+          echo "Resume Deployment: ${{ needs['resume-deployment'].outputs.status }}"
+          echo "Traffic Shift: ${{ needs['traffic-shift'].outputs.status }}"
+
+          if [ "${{ needs['scale-workers-zero'].outputs.status }}" != "success" ] || \
+             [ "${{ needs['deploy-web'].outputs.status }}" != "success" ] || \
+             [ "${{ needs['deploy-worker-commission'].outputs.status }}" != "success" ] || \
+             [ "${{ needs['deploy-worker-system'].outputs.status }}" != "success" ] || \
+             [ "${{ needs['deploy-worker-user'].outputs.status }}" != "success" ] || \
+             [ "${{ needs['resume-deployment'].outputs.status }}" != "success" ] || \
+             [ "${{ needs['traffic-shift'].outputs.status }}" != "success" ]; then
+            echo "deploy_failed=true" >> "$GITHUB_OUTPUT"
+            echo "One or more deploys failed!"
+          else
+            echo "deploy_failed=false" >> "$GITHUB_OUTPUT"
+            echo "All deploys succeeded!"
+          fi
+
+      - name: Set validation status
+        id: check
+        if: always()
+        run: |
+          echo "============================================"
+          echo "  RESULTADO DA VALIDAÇÃO"
+          echo "============================================"
+          echo ""
+
+          if [ "${{ steps.check-deploys.outputs.deploy_failed }}" = "true" ]; then
+            echo "  ✗ FALHA: Um ou mais deploys falharam"
+            echo ""
+            echo "  Scale Workers: ${{ needs['scale-workers-zero'].outputs.status }}"
+            echo "  Web: ${{ needs['deploy-web'].outputs.status }}"
+            echo "  Commission: ${{ needs['deploy-worker-commission'].outputs.status }}"
+            echo "  System: ${{ needs['deploy-worker-system'].outputs.status }}"
+            echo "  User: ${{ needs['deploy-worker-user'].outputs.status }}"
+            echo "  Resume Deployment: ${{ needs['resume-deployment'].outputs.status }}"
+            echo "  Traffic Shift: ${{ needs['traffic-shift'].outputs.status }}"
+            echo ""
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "failure_reason=deploy_failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          else
+            echo "  ✓ SUCESSO: Todos os deploys executados!"
+            echo ""
+            echo "  - Scale Workers: OK"
+            echo "  - Web: OK"
+            echo "  - Commission: OK"
+            echo "  - System: OK"
+            echo "  - User: OK"
+            echo "  - Resume Deployment: OK"
+            echo "  - Traffic Shift: OK"
+            echo ""
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================================
+  # JOB 5: SUCCESS - Deploy concluído
+  # ============================================================================
+  success:
+    name: Deployment Success
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.validation_status == 'success'
+
+    steps:
+      - name: Deployment completed
+        run: |
+          echo "============================================"
+          echo "  DEPLOYMENT COMPLETED SUCCESSFULLY!"
+          echo "============================================"
+          echo ""
+          echo "Environment: POC"
+          echo "Cluster: poc-001-cluster"
+          echo ""
+          echo "Services deployed:"
+          echo "  - poc-001-web-service"
+          echo "  - poc-001-worker-commission-service"
+          echo "  - poc-001-worker-system-service"
+          echo "  - poc-001-worker-user-service"

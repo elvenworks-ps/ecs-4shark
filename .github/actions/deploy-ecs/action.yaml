@@ -1,0 +1,200 @@
+name: 'Deploy to ECS'
+description: 'Build Docker image and deploy to Amazon ECS'
+
+inputs:
+  desired-count:
+    description: 'Desired number of tasks (optional, keeps current if not set)'
+    required: false
+    default: ''
+  dockerfile:
+    description: 'Dockerfile type: web or worker'
+    required: true
+  ecr-repo:
+    description: 'ECR repository URL'
+    required: true
+  ecs-cluster:
+    description: 'ECS cluster name'
+    required: true
+  ecs-service:
+    description: 'ECS service name for deployment'
+    required: true
+  rails-env:
+    description: 'Rails environment (development or production)'
+    required: true
+  secrets-json:
+    description: 'GitHub Environment secrets as JSON'
+    required: true
+  service-name:
+    description: 'ECS service name (e.g., beta-001-web)'
+    required: true
+  sidekiq-config:
+    description: 'Sidekiq config file (only for workers)'
+    required: false
+    default: ''
+  task-family:
+    description: 'ECS task definition family'
+    required: true
+  vars-json:
+    description: 'GitHub Environment variables as JSON'
+    required: true
+  wait-stable:
+    description: 'Wait for service to reach stable state after deploy'
+    required: false
+    default: 'true'
+  deployment-mode:
+    description: 'Deployment mode: update-service (default) or codedeploy (register task definition only)'
+    required: false
+    default: 'update-service'
+
+outputs:
+  task-def-arn:
+    description: 'Registered task definition ARN'
+    value: ${{ steps['register-task'].outputs.task_def_arn }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup environment
+      shell: bash
+      run: |
+        # Parse AWS and DIFFEND secrets
+        echo '${{ inputs.secrets-json }}' | jq -r '
+          to_entries[] |
+          select(.key | test("^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|DIFFEND_)")) |
+          "\(.key)=\(.value)"
+        ' >> $GITHUB_ENV
+
+        # Set BUNDLE_WITHOUT based on rails-env
+        if [ "${{ inputs.rails-env }}" = "development" ]; then
+          echo "BUNDLE_WITHOUT=test" >> $GITHUB_ENV
+        else
+          echo "BUNDLE_WITHOUT=development test" >> $GITHUB_ENV
+        fi
+
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Login ECR
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Determine version
+      shell: bash
+      run: |
+        VERSION=$(grep "VERSION = " config/version.rb | cut -d"'" -f2)
+        SHORT_SHA=$(git rev-parse --short=7 HEAD)
+        IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+    - name: Build and Push Image (Web)
+      if: ${{ inputs.dockerfile == 'web' }}
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: ./.github/docker/web/Dockerfile
+        push: true
+        tags: |
+          ${{ inputs.ecr-repo }}:latest
+          ${{ inputs.ecr-repo }}:${{ env.IMAGE_TAG }}
+        build-args: |
+          BUNDLE_WITHOUT=${{ env.BUNDLE_WITHOUT }}
+          DIFFEND_PROJECT_ID=${{ env.DIFFEND_PROJECT_ID }}
+          DIFFEND_SHAREABLE_ID=${{ env.DIFFEND_SHAREABLE_ID }}
+          DIFFEND_SHAREABLE_KEY=${{ env.DIFFEND_SHAREABLE_KEY }}
+          RAILS_ENV=${{ inputs.rails-env }}
+
+    - name: Build and Push Image (Worker)
+      if: ${{ inputs.dockerfile == 'worker' }}
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: ./.github/docker/worker/Dockerfile
+        push: true
+        tags: |
+          ${{ inputs.ecr-repo }}:latest
+          ${{ inputs.ecr-repo }}:${{ env.IMAGE_TAG }}
+        build-args: |
+          BUNDLE_WITHOUT=${{ env.BUNDLE_WITHOUT }}
+          DIFFEND_PROJECT_ID=${{ env.DIFFEND_PROJECT_ID }}
+          DIFFEND_SHAREABLE_ID=${{ env.DIFFEND_SHAREABLE_ID }}
+          DIFFEND_SHAREABLE_KEY=${{ env.DIFFEND_SHAREABLE_KEY }}
+          RAILS_ENV=${{ inputs.rails-env }}
+          SIDEKIQ_CONFIG=${{ inputs.sidekiq-config }}
+
+    - name: Register Task Definition
+      id: register-task
+      shell: bash
+      env:
+        VARS_JSON: ${{ inputs.vars-json }}
+        SECRETS_JSON: ${{ inputs.secrets-json }}
+      run: |
+        FAMILY="${{ inputs.task-family }}"
+        IMAGE_URI="${{ inputs.ecr-repo }}:latest"
+
+        aws ecs describe-task-definition \
+          --task-definition $FAMILY \
+          --query 'taskDefinition' > task-def.json
+
+        jq 'del(
+          .compatibilities,
+          .registeredAt,
+          .registeredBy,
+          .requiresAttributes,
+          .revision,
+          .runtimePlatform.cpuArchitecture?,
+          .runtimePlatform.operatingSystemFamily?,
+          .status,
+          .taskDefinitionArn
+        )' task-def.json > clean-task.json
+
+        # Convert GitHub vars to ECS format [{name, value}]
+        echo "$VARS_JSON" | jq -r 'to_entries | map({name: .key, value: (.value | tostring)})' > env-vars.json
+
+        # Convert GitHub secrets to ECS format (secrets override vars if same key)
+        echo "$SECRETS_JSON" | jq -r 'to_entries | map({name: .key, value: (.value | tostring)})' > env-secrets.json
+
+        # Merge vars and secrets (secrets take precedence)
+        jq -s '.[0] + .[1] | group_by(.name) | map(last)' env-vars.json env-secrets.json > env-merged.json
+
+        CONTAINER_NAME="${{ inputs.service-name }}"
+        jq --arg IMAGE "$IMAGE_URI" \
+           --arg NAME "$CONTAINER_NAME" \
+           --slurpfile ENVS env-merged.json \
+          '(.containerDefinitions[] | select(.name == $NAME)).image = $IMAGE |
+           (.containerDefinitions[] | select(.name == $NAME)).environment = $ENVS[0]' \
+          clean-task.json > final-task.json
+
+        TASK_DEF_ARN=$(aws ecs register-task-definition \
+          --cli-input-json file://final-task.json \
+          --query 'taskDefinition.taskDefinitionArn' \
+          --output text)
+
+        echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+        echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+    - name: Deploy ECS
+      if: ${{ inputs.deployment-mode == 'update-service' }}
+      shell: bash
+      run: |
+        DESIRED_COUNT_ARG=""
+        if [ -n "${{ inputs.desired-count }}" ]; then
+          DESIRED_COUNT_ARG="--desired-count ${{ inputs.desired-count }}"
+        fi
+
+        aws ecs update-service \
+          --cluster ${{ inputs.ecs-cluster }} \
+          --service ${{ inputs.ecs-service }} \
+          --task-definition ${{ env.TASK_DEF_ARN }} \
+          --force-new-deployment \
+          $DESIRED_COUNT_ARG
+
+    - name: Wait service stable
+      if: ${{ inputs.deployment-mode == 'update-service' && inputs.wait-stable != 'false' }}
+      shell: bash
+      run: |
+        aws ecs wait services-stable \
+          --cluster ${{ inputs.ecs-cluster }} \
+          --services ${{ inputs.ecs-service }}

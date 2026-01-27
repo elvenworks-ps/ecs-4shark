@@ -1,0 +1,292 @@
+name: 'Deploy Blue/Green ECS'
+description: 'Deploy transacional Blue/Green para ECS com rollback automático'
+
+inputs:
+  environment:
+    description: 'Nome do ambiente (poc, demo, beta, shared, atento)'
+    required: true
+  cluster_name:
+    description: 'Nome do cluster ECS'
+    required: true
+  aws_access_key_id:
+    description: 'AWS Access Key ID'
+    required: true
+  aws_secret_access_key:
+    description: 'AWS Secret Access Key'
+    required: true
+  aws_region:
+    description: 'AWS Region'
+    required: false
+    default: 'us-east-1'
+  ecr_registry:
+    description: 'ECR Registry URL'
+    required: false
+    default: '405749097490.dkr.ecr.us-east-1.amazonaws.com'
+  image_tag:
+    description: 'Tag da imagem a ser deployada'
+    required: true
+  services:
+    description: 'Lista de serviços separados por vírgula'
+    required: true
+  bake_time_minutes:
+    description: 'Tempo de bake em minutos'
+    required: false
+    default: '5'
+  skip_migrations:
+    description: 'Pular migrations'
+    required: false
+    default: 'false'
+
+outputs:
+  deployment_status:
+    description: 'Status do deployment (success/failed/rolled_back)'
+    value: ${{ steps.result.outputs.status }}
+  deployment_id:
+    description: 'ID único do deployment'
+    value: ${{ steps.init.outputs.deployment_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Initialize deployment
+      id: init
+      shell: bash
+      run: |
+        DEPLOYMENT_ID="${{ inputs.environment }}-$(date +%Y%m%d%H%M%S)"
+        echo "deployment_id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+        echo "Starting deployment: ${DEPLOYMENT_ID}"
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Store current task definitions (for rollback)
+      id: store-current
+      shell: bash
+      run: |
+        echo "Storing current task definitions for rollback..."
+        IFS=',' read -ra SERVICES <<< "${{ inputs.services }}"
+
+        ROLLBACK_MAP=""
+        for SERVICE in "${SERVICES[@]}"; do
+          SERVICE=$(echo $SERVICE | xargs)  # trim whitespace
+          CURRENT_TASK=$(aws ecs describe-services \
+            --cluster ${{ inputs.cluster_name }} \
+            --services ${SERVICE} \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          if [ -n "$CURRENT_TASK" ] && [ "$CURRENT_TASK" != "None" ]; then
+            ROLLBACK_MAP="${ROLLBACK_MAP}${SERVICE}=${CURRENT_TASK};"
+            echo "Stored: ${SERVICE} -> ${CURRENT_TASK}"
+          fi
+        done
+
+        echo "rollback_map=${ROLLBACK_MAP}" >> $GITHUB_OUTPUT
+
+    - name: Register new task definitions
+      id: register
+      shell: bash
+      run: |
+        echo "Registering new task definitions..."
+        IFS=',' read -ra SERVICES <<< "${{ inputs.services }}"
+
+        NEW_TASKS=""
+        for SERVICE in "${SERVICES[@]}"; do
+          SERVICE=$(echo $SERVICE | xargs)
+          TASK_FAMILY="${SERVICE%-service}"
+          IMAGE_NAME="${{ inputs.environment }}-001-${TASK_FAMILY#*-001-}"
+
+          # Ajustar nome da imagem para workers
+          if [[ "$SERVICE" == *"worker"* ]]; then
+            WORKER_TYPE="${SERVICE#*worker-}"
+            WORKER_TYPE="${WORKER_TYPE%-service}"
+            IMAGE_NAME="${{ inputs.environment }}-001-worker-${WORKER_TYPE}"
+          else
+            IMAGE_NAME="${{ inputs.environment }}-001-web"
+          fi
+
+          echo "Registering ${SERVICE} with image ${IMAGE_NAME}:${{ inputs.image_tag }}..."
+
+          # Obter task definition atual
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition ${TASK_FAMILY} \
+            --query 'taskDefinition' \
+            --output json)
+
+          # Atualizar imagem
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq \
+            --arg IMAGE "${{ inputs.ecr_registry }}/${IMAGE_NAME}:${{ inputs.image_tag }}" \
+            '.containerDefinitions[0].image = $IMAGE |
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+          # Registrar nova task definition
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          NEW_TASKS="${NEW_TASKS}${SERVICE}=${NEW_ARN};"
+          echo "Registered: ${SERVICE} -> ${NEW_ARN}"
+        done
+
+        echo "new_tasks=${NEW_TASKS}" >> $GITHUB_OUTPUT
+
+    - name: Run migrations
+      if: inputs.skip_migrations != 'true'
+      shell: bash
+      run: |
+        echo "Running database migrations..."
+
+        MIGRATION_TASK="${{ inputs.environment }}-001-worker-migration"
+
+        TASK_ARN=$(aws ecs run-task \
+          --cluster ${{ inputs.cluster_name }} \
+          --task-definition ${MIGRATION_TASK} \
+          --count 1 \
+          --launch-type EC2 \
+          --query 'tasks[0].taskArn' \
+          --output text 2>/dev/null || echo "")
+
+        if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" == "None" ]; then
+          echo "Migration task not found, skipping..."
+          exit 0
+        fi
+
+        echo "Migration task started: ${TASK_ARN}"
+
+        aws ecs wait tasks-stopped \
+          --cluster ${{ inputs.cluster_name }} \
+          --tasks ${TASK_ARN}
+
+        EXIT_CODE=$(aws ecs describe-tasks \
+          --cluster ${{ inputs.cluster_name }} \
+          --tasks ${TASK_ARN} \
+          --query 'tasks[0].containers[0].exitCode' \
+          --output text)
+
+        if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "None" ]; then
+          echo "Migration failed with exit code: ${EXIT_CODE}"
+          exit 1
+        fi
+
+        echo "Migrations completed successfully"
+
+    - name: Deploy services
+      id: deploy
+      shell: bash
+      run: |
+        echo "Deploying services..."
+
+        # Parse new tasks map
+        NEW_TASKS="${{ steps.register.outputs.new_tasks }}"
+
+        IFS=';' read -ra PAIRS <<< "$NEW_TASKS"
+        for PAIR in "${PAIRS[@]}"; do
+          if [ -n "$PAIR" ]; then
+            SERVICE="${PAIR%%=*}"
+            TASK_ARN="${PAIR#*=}"
+
+            echo "Deploying ${SERVICE}..."
+            aws ecs update-service \
+              --cluster ${{ inputs.cluster_name }} \
+              --service ${SERVICE} \
+              --task-definition ${TASK_ARN} \
+              --force-new-deployment \
+              --no-cli-pager
+          fi
+        done
+
+        echo "All deployments initiated"
+
+    - name: Wait for services to stabilize
+      id: validate
+      shell: bash
+      run: |
+        echo "Waiting for services to stabilize..."
+        IFS=',' read -ra SERVICES <<< "${{ inputs.services }}"
+
+        FAILED=false
+        for SERVICE in "${SERVICES[@]}"; do
+          SERVICE=$(echo $SERVICE | xargs)
+          echo "Waiting for ${SERVICE}..."
+
+          if ! timeout 600 aws ecs wait services-stable \
+            --cluster ${{ inputs.cluster_name }} \
+            --services ${SERVICE}; then
+            echo "FAILED: ${SERVICE} did not stabilize within timeout"
+            FAILED=true
+          else
+            echo "OK: ${SERVICE} is stable"
+          fi
+        done
+
+        if [ "$FAILED" = true ]; then
+          echo "validation_status=failed" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        echo "validation_status=success" >> $GITHUB_OUTPUT
+
+    - name: Bake time
+      if: steps.validate.outputs.validation_status == 'success'
+      shell: bash
+      run: |
+        BAKE_MINUTES=${{ inputs.bake_time_minutes }}
+        echo "Bake time: ${BAKE_MINUTES} minutes"
+        sleep $((BAKE_MINUTES * 60))
+        echo "Bake time completed"
+
+    - name: Rollback on failure
+      if: failure()
+      shell: bash
+      run: |
+        echo "DEPLOYMENT FAILED - Rolling back..."
+
+        ROLLBACK_MAP="${{ steps.store-current.outputs.rollback_map }}"
+
+        IFS=';' read -ra PAIRS <<< "$ROLLBACK_MAP"
+        for PAIR in "${PAIRS[@]}"; do
+          if [ -n "$PAIR" ]; then
+            SERVICE="${PAIR%%=*}"
+            TASK_ARN="${PAIR#*=}"
+
+            echo "Rolling back ${SERVICE} to ${TASK_ARN}..."
+            aws ecs update-service \
+              --cluster ${{ inputs.cluster_name }} \
+              --service ${SERVICE} \
+              --task-definition ${TASK_ARN} \
+              --force-new-deployment \
+              --no-cli-pager || true
+          fi
+        done
+
+        echo "Rollback initiated"
+
+        # Wait for rollback
+        IFS=',' read -ra SERVICES <<< "${{ inputs.services }}"
+        for SERVICE in "${SERVICES[@]}"; do
+          SERVICE=$(echo $SERVICE | xargs)
+          echo "Waiting for ${SERVICE} rollback..."
+          aws ecs wait services-stable \
+            --cluster ${{ inputs.cluster_name }} \
+            --services ${SERVICE} || true
+        done
+
+        echo "Rollback completed"
+
+    - name: Set result
+      id: result
+      if: always()
+      shell: bash
+      run: |
+        if [ "${{ steps.validate.outputs.validation_status }}" == "success" ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        elif [ "${{ job.status }}" == "failure" ]; then
+          echo "status=rolled_back" >> $GITHUB_OUTPUT
+        else
+          echo "status=failed" >> $GITHUB_OUTPUT
+        fi
